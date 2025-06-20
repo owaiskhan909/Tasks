@@ -9,13 +9,22 @@ import {
   FaLink,
   FaList,
 } from "react-icons/fa";
+import {
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+} from "firebase/firestore";
+import { db } from "../lib/firebaseConfig";
 
 Modal.setAppElement("#root");
 
 function UserDetails() {
   const { id } = useParams();
   const [user, setUser] = useState(null);
-  const [users, setUsers] = useState([]);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showListModal, setShowListModal] = useState(false);
   const [newLink, setNewLink] = useState("");
@@ -28,74 +37,93 @@ function UserDetails() {
   const [linkPage, setLinkPage] = useState(1);
   const [descPage, setDescPage] = useState(1);
 
-  useEffect(() => {
-    const storedUsers = JSON.parse(localStorage.getItem("users") || "[]");
-    setUsers(storedUsers);
-    setUser(storedUsers[id]);
-  }, [id]);
+  // 🔁 REPLACED LOCAL STORAGE with Firebase Fetch
+  const fetchUserData = async () => {
+    const userRef = doc(db, "users", id);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
 
-  const updateUserData = (updatedUser) => {
-    const updatedUsers = [...users];
-    updatedUsers[id] = updatedUser;
-    setUsers(updatedUsers);
-    setUser(updatedUser);
-    localStorage.setItem("users", JSON.stringify(updatedUsers));
+      const linksSnap = await getDocs(collection(db, `users/${id}/links`));
+      const listsSnap = await getDocs(collection(db, `users/${id}/lists`));
+
+      userData.links = linksSnap.docs.map((doc) => doc.data().value);
+      userData.descriptions = listsSnap.docs.map((doc) => doc.data().value);
+
+      setUser(userData);
+    }
   };
+  useEffect(() => {
+    fetchUserData();
+  }, [id]);
 
   const validateUrl = (url) => {
     try {
       const parsed = new URL(url);
       return parsed.protocol === "http:" || parsed.protocol === "https:";
-    } catch (err) {
+    } catch {
       return false;
     }
   };
 
-  const handleAddLink = () => {
-    if (!newLink.trim()) {
-      setLinkError("Link cannot be empty");
-      return;
-    }
-    if (!validateUrl(newLink.trim())) {
-      setLinkError("Please enter a valid URL (http/https)");
-      return;
+  const handleAddLink = async () => {
+    if (!newLink.trim()) return setLinkError("Link cannot be empty");
+    if (!validateUrl(newLink.trim())) return setLinkError("Invalid URL");
+
+    const linksRef = collection(db, `users/${id}/links`);
+
+    if (editingType === "link" && editIndex !== null) {
+      const linkDocs = await getDocs(linksRef);
+      const docId = linkDocs.docs[editIndex]?.id;
+      if (docId)
+        await updateDoc(doc(db, `users/${id}/links/${docId}`), {
+          value: newLink.trim(),
+        });
+    } else {
+      await setDoc(doc(linksRef), { value: newLink.trim() });
     }
 
-    const updatedLinks =
-      editingType === "link" && editIndex !== null
-        ? user.links.map((l, i) => (i === editIndex ? newLink.trim() : l))
-        : [...(user.links || []), newLink.trim()];
-
-    updateUserData({ ...user, links: updatedLinks });
     setNewLink("");
     setEditIndex(null);
     setEditingType("");
     setShowLinkModal(false);
     setLinkError("");
+    fetchUserData();
   };
 
-  const handleAddDesc = () => {
+  const handleAddDesc = async () => {
     if (!newDesc.trim()) return;
-    const updatedDescs =
-      editingType === "desc" && editIndex !== null
-        ? user.descriptions.map((d, i) =>
-            i === editIndex ? newDesc.trim() : d
-          )
-        : [...(user.descriptions || []), newDesc.trim()];
-    updateUserData({ ...user, descriptions: updatedDescs });
+
+    const listsRef = collection(db, `users/${id}/lists`);
+
+    if (editingType === "desc" && editIndex !== null) {
+      const descDocs = await getDocs(listsRef);
+      const docId = descDocs.docs[editIndex]?.id;
+      if (docId)
+        await updateDoc(doc(db, `users/${id}/lists/${docId}`), {
+          value: newDesc.trim(),
+        });
+    } else {
+      await setDoc(doc(listsRef), { value: newDesc.trim() });
+    }
+
     setNewDesc("");
     setEditIndex(null);
     setEditingType("");
     setShowListModal(false);
+    fetchUserData();
   };
 
-  const handleDelete = (type, index) => {
-    const updated = [...(user[type] || [])];
-    updated.splice(index, 1);
-    updateUserData({ ...user, [type]: updated });
+  const handleDelete = async (type, index) => {
+    const refPath =
+      type === "links" ? `users/${id}/links` : `users/${id}/lists`;
+    const snap = await getDocs(collection(db, refPath));
+    const docId = snap.docs[index]?.id;
+    if (docId) await deleteDoc(doc(db, `${refPath}/${docId}`));
+    fetchUserData();
   };
 
-  const handleEdit = (type, index) => {
+  const handleEdit = async (type, index) => {
     setEditIndex(index);
     setEditingType(type);
     if (type === "link") {
@@ -131,7 +159,7 @@ function UserDetails() {
       <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6">
         <div className="bg-white rounded-xl shadow p-6 flex-1 min-w-[280px]">
           <h2 className="text-xl font-bold mb-4 text-gray-800 border-b pb-2">
-            👤 User Info
+            User Info
           </h2>
           <div className="space-y-2 text-gray-700 text-sm">
             <p>
@@ -155,10 +183,10 @@ function UserDetails() {
           </div>
         </div>
 
-        {/* LINKS */}
+        {/* 🔗 Links Section */}
         <div className="bg-white rounded-xl shadow p-6 flex-1">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold text-blue-700">🔗 Links</h3>
+            <h3 className="text-lg font-semibold text-blue-700">Links</h3>
             <button
               onClick={() => {
                 setNewLink("");
@@ -167,7 +195,7 @@ function UserDetails() {
                 setEditingType("link");
                 setShowLinkModal(true);
               }}
-              className="bg-green-600 text-white px-3 py-1.5 rounded text-sm flex items-center gap-1"
+              className="bg-green-600 text-white px-3 py-1.5 rounded text-sm flex items-center gap-1 hover:cursor-pointer"
             >
               <FaLink /> Add Link
             </button>
@@ -194,12 +222,10 @@ function UserDetails() {
                         <FaEdit
                           onClick={() => handleEdit("link", fullIndex)}
                           className="cursor-pointer text-blue-500"
-                          title="Edit"
                         />
                         <FaTrash
                           onClick={() => handleDelete("links", fullIndex)}
                           className="cursor-pointer text-red-500"
-                          title="Delete"
                         />
                       </div>
                     </li>
@@ -210,7 +236,7 @@ function UserDetails() {
                 <button
                   onClick={() => setLinkPage((p) => Math.max(p - 1, 1))}
                   disabled={linkPage === 1}
-                  className="disabled:opacity-40 text-blue-500"
+                  className="text-blue-500"
                 >
                   <FaArrowLeft />
                 </button>
@@ -222,7 +248,7 @@ function UserDetails() {
                     )
                   }
                   disabled={linkPage * itemsPerPage >= user.links.length}
-                  className="disabled:opacity-40 text-blue-500"
+                  className="text-blue-500"
                 >
                   <FaArrowRight />
                 </button>
@@ -233,10 +259,9 @@ function UserDetails() {
           )}
         </div>
 
-        {/* DESCRIPTIONS */}
         <div className="bg-white rounded-xl shadow p-6 flex-1">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold text-indigo-700">📝 List</h3>
+            <h3 className="text-lg font-semibold text-indigo-700">List</h3>
             <button
               onClick={() => {
                 setNewDesc("");
@@ -244,7 +269,7 @@ function UserDetails() {
                 setEditingType("desc");
                 setShowListModal(true);
               }}
-              className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm flex items-center gap-1"
+              className="bg-indigo-600 cursor-pointer text-white px-3 py-1.5 rounded text-sm flex items-center gap-1"
             >
               <FaList /> Add List
             </button>
@@ -266,14 +291,12 @@ function UserDetails() {
                         <FaEdit
                           onClick={() => handleEdit("desc", fullIndex)}
                           className="cursor-pointer text-blue-500"
-                          title="Edit"
                         />
                         <FaTrash
                           onClick={() =>
                             handleDelete("descriptions", fullIndex)
                           }
                           className="cursor-pointer text-red-500"
-                          title="Delete"
                         />
                       </div>
                     </li>
@@ -284,7 +307,7 @@ function UserDetails() {
                 <button
                   onClick={() => setDescPage((p) => Math.max(p - 1, 1))}
                   disabled={descPage === 1}
-                  className="disabled:opacity-40 text-blue-500"
+                  className="text-blue-500"
                 >
                   <FaArrowLeft />
                 </button>
@@ -296,7 +319,7 @@ function UserDetails() {
                     )
                   }
                   disabled={descPage * itemsPerPage >= user.descriptions.length}
-                  className="disabled:opacity-40 text-blue-500"
+                  className="text-blue-500"
                 >
                   <FaArrowRight />
                 </button>
@@ -308,7 +331,6 @@ function UserDetails() {
         </div>
       </div>
 
-      {/* LINK MODAL */}
       <Modal
         isOpen={showLinkModal}
         onRequestClose={() => setShowLinkModal(false)}
@@ -325,13 +347,9 @@ function UserDetails() {
           onChange={(e) => {
             const value = e.target.value;
             setNewLink(value);
-            if (!value.trim()) {
-              setLinkError("Link cannot be empty");
-            } else if (!validateUrl(value)) {
-              setLinkError("Please enter a valid URL (http/https)");
-            } else {
-              setLinkError("");
-            }
+            if (!value.trim()) setLinkError("Link cannot be empty");
+            else if (!validateUrl(value)) setLinkError("Invalid URL");
+            else setLinkError("");
           }}
           className="w-full border px-4 py-2 rounded mb-1"
           autoFocus
@@ -353,7 +371,7 @@ function UserDetails() {
         </div>
       </Modal>
 
-      {/* LIST MODAL */}
+      {/* 🧩 List Modal */}
       <Modal
         isOpen={showListModal}
         onRequestClose={() => setShowListModal(false)}
@@ -373,13 +391,13 @@ function UserDetails() {
         <div className="flex justify-end gap-2">
           <button
             onClick={() => setShowListModal(false)}
-            className="bg-gray-200 px-4 py-2 rounded"
+            className="bg-gray-200 cursor-pointer px-4 py-2 rounded"
           >
             Cancel
           </button>
           <button
             onClick={handleAddDesc}
-            className="bg-indigo-600 text-white px-4 py-2 rounded"
+            className="bg-indigo-600 cursor-pointer text-white px-4 py-2 rounded"
           >
             Save
           </button>
